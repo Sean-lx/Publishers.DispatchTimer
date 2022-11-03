@@ -41,24 +41,56 @@ where S.Input == DispatchTime {
     var requestedCount: Subscribers.Demand = .none   // the item count demanded by subscriber
     var source: DispatchSourceTimer? = nil
     var subscriber: S?
-    let semaphore = DispatchSemaphore(value: 1)
+    let semaphore = DispatchSemaphore(value: 0)
     
-    init(subscriber: S,
-         configuration: DispatchTimerConfiguration) {
+    init(subscriber: S, configuration: DispatchTimerConfiguration) {
         self.configuration = configuration
         self.subscriber = subscriber
         self.maximumCount = configuration.repetitionCount
     }
     
     func initTimerSource() -> DispatchSourceTimer {
-        let timerSource = DispatchSource.makeTimerSource(queue: configuration.queue)
+        let defaultQueue = DispatchQueue.init(label: "dispatch_timer_dafault_queue",
+                                              qos: .background,
+                                              attributes: .concurrent)
+        let sourceQueue = configuration.queue ?? defaultQueue
+        // makeTimerSource(:) takes a dispatch queue which the event handler will be
+        // running on, the default queue is a background queue if we pass nil to
+        // the parameter.
+        // It is better to explicitly make the default queue a background queue,
+        // because we don't know whether Apple will change this default value in the
+        // future
+        let timerSource = DispatchSource.makeTimerSource(queue: sourceQueue)
         timerSource.schedule(deadline: .now() + configuration.interval,
-                        repeating: configuration.interval,
-                        leeway: configuration.leeway)
+                             repeating: configuration.interval,
+                             leeway: configuration.leeway)
         return timerSource
     }
     
-    func activate(timerSource: DispatchSourceTimer, eventHandler: DispatchWorkItem) {
+    func initTimerEventHandler() -> DispatchWorkItem {
+        let qos = configuration.queue?.qos ?? .default
+        let handler = DispatchWorkItem.init {
+            DispatchQueue.global(qos: qos.qosClass).async { [weak self] in
+                guard let self = self,
+                      self.requestedCount > .none else { return }
+                
+                self.requestedCount -= .max(1)
+                self.maximumCount -= .max(1)
+                // receive value and update demand
+                self.requestedCount += self.subscriber?.receive(.now()) ?? .none
+                
+                if self.maximumCount == .none || self.requestedCount == .none {
+                    self.subscriber?.receive(completion: .finished)
+                    self.source?.cancel()
+                }
+                self.semaphore.signal()
+            }
+            self.semaphore.wait()
+        }
+        return handler
+    }
+    
+    func activate(timerSource: DispatchSourceTimer, with eventHandler: DispatchWorkItem) {
         timerSource.setEventHandler(handler: eventHandler)
         timerSource.activate()
     }
@@ -66,25 +98,8 @@ where S.Input == DispatchTime {
     func activateTimerSource() {
         if source == nil, requestedCount > .none {
             source = initTimerSource()
-            let qos = configuration.queue?.qos ?? .default
-            let handler = DispatchWorkItem.init() {
-                DispatchQueue.global(qos: qos.qosClass).async { [weak self] in
-                    guard let self = self,
-                          self.requestedCount > .none else { return }
-                    
-                    self.semaphore.wait()
-                    self.requestedCount -= .max(1)
-                    self.maximumCount -= .max(1)
-                    // receive current time and update demand
-                    self.requestedCount += self.subscriber?.receive(.now()) ?? .none
-                    self.semaphore.signal()
-                    
-                    if self.maximumCount == .none || self.requestedCount == .none {
-                        self.subscriber?.receive(completion: .finished)
-                    }
-                }
-            }
-            activate(timerSource: source!, eventHandler: handler)
+            let eventHandler = initTimerEventHandler()
+            activate(timerSource: source!, with: eventHandler)
         }
     }
     
