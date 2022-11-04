@@ -39,7 +39,7 @@ where S.Input == DispatchTime {
     let configuration: DispatchTimerConfiguration
     var maximumCount: Subscribers.Demand             // the repeat times of timer.
     var requestedCount: Subscribers.Demand = .none   // the item count demanded by subscriber
-    var source: DispatchSourceTimer? = nil
+    var timerSource: DispatchSourceTimer? = nil
     var subscriber: S?
     let semaphore = DispatchSemaphore(value: 0)
     
@@ -59,7 +59,7 @@ where S.Input == DispatchTime {
         // the parameter.
         // It is better to explicitly make the default queue a background queue,
         // because we don't know whether Apple will change this default value in the
-        // future
+        // future.
         let timerSource = DispatchSource.makeTimerSource(queue: sourceQueue)
         timerSource.schedule(deadline: .now() + configuration.interval,
                              repeating: configuration.interval,
@@ -70,6 +70,11 @@ where S.Input == DispatchTime {
     func initTimerEventHandler() -> DispatchWorkItem {
         let qos = configuration.queue?.qos ?? .default
         let handler = DispatchWorkItem.init {
+            // self.timerSource?.cancel() is asynchronous, it is not thread safe,
+            // even the whole event block is installed on a serial queue.
+            // One way to keep this handler thread safe is to use semaphore to sychronize
+            // the asynchronous cancel call.
+            // Another way is using DispatchQueue.sync to wrap up this handler.
             DispatchQueue.global(qos: qos.qosClass).async { [weak self] in
                 guard let self = self,
                       self.requestedCount > .none else { return }
@@ -81,7 +86,7 @@ where S.Input == DispatchTime {
                 
                 if self.maximumCount == .none || self.requestedCount == .none {
                     self.subscriber?.receive(completion: .finished)
-                    self.source?.cancel()
+                    self.timerSource?.cancel()
                 }
                 self.semaphore.signal()
             }
@@ -96,10 +101,10 @@ where S.Input == DispatchTime {
     }
     
     func activateTimerSource() {
-        if source == nil, requestedCount > .none {
-            source = initTimerSource()
+        if timerSource == nil, requestedCount > .none {
+            timerSource = initTimerSource()
             let eventHandler = initTimerEventHandler()
-            activate(timerSource: source!, with: eventHandler)
+            activate(timerSource: timerSource!, with: eventHandler)
         }
     }
     
@@ -120,8 +125,8 @@ where S.Input == DispatchTime {
     }
     
     func cancel() {
-        source?.cancel()
-        source = nil
+        timerSource?.cancel()
+        timerSource = nil
         subscriber = nil
     }
 }
