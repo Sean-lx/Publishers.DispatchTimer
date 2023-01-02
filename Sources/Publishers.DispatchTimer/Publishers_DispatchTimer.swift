@@ -1,7 +1,6 @@
 import Foundation
 import Combine
 
-@available(macOS 10.15, iOS 13.0, watchOS 6.0, *)
 struct DispatchTimerConfiguration {
   let queue: DispatchQueue?
   let interval: DispatchTimeInterval
@@ -9,7 +8,6 @@ struct DispatchTimerConfiguration {
   let repetitionCount: Subscribers.Demand
 }
 
-@available(macOS 10.15, iOS 13.0, watchOS 6.0, *)
 extension Publishers {
   struct DispatchTimer: Publisher {
     typealias Output = DispatchTime
@@ -33,7 +31,6 @@ extension Publishers {
   }
 }
 
-@available(macOS 10.15, iOS 13.0, watchOS 6.0, *)
 private final class DispatchTimerSubscription<S: Subscriber>: Subscription
 where S.Input == DispatchTime {
   let configuration: DispatchTimerConfiguration
@@ -131,7 +128,6 @@ where S.Input == DispatchTime {
   }
 }
 
-@available(macOS 10.15, iOS 13.0, watchOS 6.0, *)
 public extension Publishers {
   static func timer(queue: DispatchQueue? = nil,
                     interval: DispatchTimeInterval,
